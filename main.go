@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
-	"runtime"
 
 	"github.com/OffBroadway/fatfs/pkg/fatfs"
 	"github.com/spf13/afero"
@@ -91,30 +90,88 @@ func main() {
 	// 	TraceLog: tracelog,
 	// }, afero.Fs(fs))
 
-	if runtime.GOOS == "linux" {
-		srv := ftpserver.NewFtpServer(
-			&FTPServer{
-				Settings: &ftpserver.Settings{
-					ListenAddr: "0.0.0.0:7021",
-					// Use single stream for data connections
-					// DisableActiveMode: true,
-				},
-				FileSystem: afero.Fs(fs),
+	srv := ftpserver.NewFtpServer(
+		&FTPServer{
+			Settings: &ftpserver.Settings{
+				ListenAddr: "0.0.0.0:7021",
+				// Use single stream for data connections
+				// DisableActiveMode: true,
 			},
-		)
+			FileSystem: afero.Fs(fs),
+		},
+	)
 
-		// Handle SIGINT and SIGTERM.
-		// make chan
-		sig := make(chan os.Signal, 1)
-		go func() {
-			<-sig
-			srv.Stop()
-		}()
-		signal.Notify(sig, os.Interrupt)
+	// Handle SIGINT and SIGTERM.
+	// make chan
+	sig := make(chan os.Signal, 1)
+	go func() {
+		<-sig
+		srv.Stop()
+	}()
+	signal.Notify(sig, os.Interrupt)
 
-		srv.Logger = logrus.New()
-		err = srv.ListenAndServe()
+	srv.Logger = logrus.New()
+	err = srv.ListenAndServe()
+	if err != nil {
+		panic(err)
 	}
+
+	// // server
+	// ln, err := net.Listen("tcp", "0.0.0.0:7080")
+	// if err != nil {
+	// 	panic(err)
+	// }
+	// defer ln.Close()
+
+	// fmt.Println("Starting server...")
+	// err = Serve(ln, fs)
+	// if err != nil {
+	// 	fmt.Println("ERROR:", err)
+	// }
+
+	// ffs, err := affuse.New(fs)
+	// if err != nil {
+	// 	log.Fatalf("failed to create fs: %v", err)
+	// }
+
+	// c := make(chan os.Signal, 1)
+	// signal.Notify(c, os.Interrupt)
+
+	// ctx, cancel := context.WithCancel(context.Background())
+
+	// go func() {
+	// 	<-c
+	// 	cancel()
+	// }()
+	// defer ffs.Unmount()
+	// if err := ffs.Mount(ctx, "/home/trevor/mnt"); err != nil {
+	// 	log.Fatal("failed to mount file system")
+	// 	return
+	// }
+
+	// fusefs := aferofuse.NewFuseFileSystem(fs)
+
+	// opts := &nodefs.Options{}
+	// opts.Debug = true
+
+	// mynodefs := pathfs.NewPathNodeFs(fusefs, &pathfs.PathNodeFsOptions{
+	// 	ClientInodes: true,
+	// })
+	// server, _, err := nodefs.MountRoot("/home/trevor/mnt", mynodefs.Root(), opts)
+	// if err != nil {
+	// 	log.Fatalf("Mount fail: %v\n", err)
+	// }
+	// log.Println("Mounted!")
+
+	// c := make(chan os.Signal, 1)
+	// signal.Notify(c, os.Interrupt, syscall.SIGTERM)
+
+	// go func() {
+	// 	<-c
+	// 	server.Unmount()
+	// }()
+
+	// server.Serve()
 
 	fs.Unmount("0:")
 	fatfs.UnregisterBlockDevice(0)

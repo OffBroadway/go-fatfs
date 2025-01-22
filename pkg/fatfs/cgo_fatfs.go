@@ -54,13 +54,19 @@ import (
 // FatFs holds a pointer to the FATFS structure allocated in C.
 type FatFs struct {
 	fs *C.FATFS
+
+	openFiles map[string]*FatFile
 }
 
 // Fil is a Go wrapper around the FIL struct from FatFs
 type FatFile struct {
-	fil  *C.FIL
-	dir  *C.FF_DIR
+	fs  *FatFs
+	fil *C.FIL
+	dir *C.FF_DIR
+
 	info FileInfo
+
+	writeAppendMode bool
 }
 
 type FileInfo struct {
@@ -87,7 +93,7 @@ func NewFatFs() (*FatFs, error) {
 	if fs == nil {
 		return nil, fmt.Errorf("failed to allocate FATFS")
 	}
-	return &FatFs{fs: fs}, nil
+	return &FatFs{fs: fs, openFiles: make(map[string]*FatFile)}, nil
 }
 
 func (f *FatFs) Name() string {
@@ -104,6 +110,9 @@ func (f *FatFs) Mount(path string, opt byte) error {
 	if res != 0 {
 		return fmt.Errorf("f_mount error code: %d", res)
 	}
+
+	f.openFiles = make(map[string]*FatFile)
+
 	return nil
 }
 
@@ -136,12 +145,14 @@ func (f *FatFs) Chtimes(name string, atime time.Time, mtime time.Time) error {
 }
 
 func (f *FatFs) Open(path string) (afero.File, error) {
+	fmt.Println("CALL Open", path)
 	return f.OpenFile(path, os.O_RDONLY, 0o644)
 }
 
 func (f *FatFs) OpenFile(path string, flags int, perm os.FileMode) (afero.File, error) {
 	fmt.Println("CALL OpenFile", path, flags, uint32(perm))
-	file := &FatFile{}
+	file := &FatFile{fs: f}
+	file.writeAppendMode = isWriteMode(flags) && isAppendMode(flags)
 
 	cpath := C.CString(path)
 	defer C.free(unsafe.Pointer(cpath))
@@ -150,6 +161,7 @@ func (f *FatFs) OpenFile(path string, flags int, perm os.FileMode) (afero.File, 
 	infos, err := f.Stat(path)
 	if err == nil {
 		isDir = infos.IsDir()
+		file.info = *infos.(*FileInfo)
 	}
 
 	var errno C.FRESULT
@@ -160,11 +172,11 @@ func (f *FatFs) OpenFile(path string, flags int, perm os.FileMode) (afero.File, 
 			return nil, fmt.Errorf("failed to allocate DIR")
 		}
 		errno = C.f_opendir(file.dir, (*C.TCHAR)(unsafe.Pointer(cpath)))
-		fmt.Println("f_opendir ptr:", unsafe.Pointer(file.dir))
 	} else {
 		fmt.Println("Opening file:", path)
 		file.fil = C.allocate_fil()
 		if file.fil == nil {
+			fmt.Println("Failed to allocate FIL")
 			return nil, fmt.Errorf("failed to allocate FIL")
 		}
 		errno = C.f_open(file.fil, (*C.TCHAR)(unsafe.Pointer(cpath)), translateFlags(flags))
@@ -172,6 +184,7 @@ func (f *FatFs) OpenFile(path string, flags int, perm os.FileMode) (afero.File, 
 
 	// check to make sure f_open/f_opendir didn't produce an error
 	if err := errval(errno); err != nil {
+		fmt.Println("f_open/f_opendir error:", err)
 		if file.dir != nil {
 			C.free(unsafe.Pointer(file.dir))
 			file.dir = nil
@@ -180,26 +193,30 @@ func (f *FatFs) OpenFile(path string, flags int, perm os.FileMode) (afero.File, 
 			C.free(unsafe.Pointer(file.fil))
 			file.fil = nil
 		}
-		fmt.Println("f_open/f_opendir error:", err)
 		return nil, err
 	}
 
-	// fill in the file info
-	infos, err = f.Stat(path)
-	if err != nil {
-		fmt.Println("OpenFile Stat error:", err)
-		return nil, err
+	if file.info.name == "" {
+		fmt.Println("File info not found, getting from path")
+
+		// fill in the file info
+		infos, err = f.Stat(path)
+		if err != nil {
+			fmt.Println("OpenFile Stat error:", err)
+			return nil, err
+		}
+		file.info = *infos.(*FileInfo)
 	}
-	file.info = *infos.(*FileInfo)
 
 	// file handle was initialized successfully
+	f.openFiles[path] = file
 	return file, nil
 
 }
 
 func (f *FatFs) Create(name string) (afero.File, error) {
-	fmt.Println("STUB Create", name)
-	return &FatFile{}, nil
+	fmt.Println("CALL Create", name)
+	return f.OpenFile(name, os.O_CREATE|os.O_RDWR|os.O_TRUNC, 0o644)
 }
 
 func (f *FatFs) Remove(name string) error {
@@ -212,7 +229,11 @@ func (f *FatFs) Remove(name string) error {
 }
 
 func (f *FatFs) RemoveAll(path string) error {
-	fmt.Println("STUB RemoveAll", path)
+	if info, err := f.Stat(path); err == nil && !info.IsDir() {
+		return f.Remove(path)
+	}
+
+	fmt.Println("STUB RemoveAll (dir)", path)
 	return os.ErrInvalid
 }
 
@@ -270,10 +291,10 @@ func (f *FatFs) MkdirAll(path string, perm os.FileMode) error {
 }
 
 func (f *FatFs) Stat(path string) (os.FileInfo, error) {
-	fmt.Println("CALL Stat", path)
-	if path == "/" {
+	fmt.Printf("CALL Stat [%s]\n", path)
+	if path == "/" || path == "." || path == "" {
 		info := FileInfo{
-			name:    ".",
+			name:    "/",
 			size:    int64(512 * 1024 * 1024),
 			isDir:   true,
 			modTime: time.Unix(0, 0),
@@ -366,16 +387,26 @@ func (f *FatFile) Readdirnames(n int) (names []string, err error) {
 
 // Read from a file
 func (f *FatFile) Read(data []byte) (int, error) {
-	var br C.UINT
+	// fmt.Println("CALL Read", len(data))
+	if f.info.IsDir() {
+		return 0, FileResultInvalidObject
+	}
+	var br, btw C.UINT = 0, C.UINT(len(data))
 	res := C.f_read(f.fil, unsafe.Pointer(&data[0]), C.UINT(len(data)), &br)
 	if res != 0 {
+		fmt.Println("f_read error code:", errval(res))
 		return 0, fmt.Errorf("f_read error code: %d", res)
+	}
+	fmt.Println("f_read bytes read:", br)
+	if br == 0 && btw > 0 {
+		return 0, io.EOF
 	}
 	return int(br), nil
 }
 
 // Write to a file
 func (f *FatFile) Write(buf []byte) (int, error) {
+	// fmt.Println("CALL Write", len(buf))
 	if f.info.IsDir() {
 		return 0, FileResultInvalidObject
 	}
@@ -388,7 +419,7 @@ func (f *FatFile) Write(buf []byte) (int, error) {
 	}
 
 	if bw < btw {
-		fmt.Printf("DEBUG: %d < %d\n", bw, btw)
+		fmt.Printf("DEBUG: Volume Full %d < %d\n", bw, btw)
 		return int(bw), errors.New("volume is full")
 	}
 
@@ -396,6 +427,7 @@ func (f *FatFile) Write(buf []byte) (int, error) {
 }
 
 func (f *FatFile) WriteAt(buf []byte, offset int64) (n int, err error) {
+	// fmt.Println("CALL WriteAt", len(buf), offset)
 	if f.info.IsDir() {
 		return 0, FileResultInvalidObject
 	}
@@ -429,10 +461,19 @@ func (f *FatFile) WriteString(s string) (n int, err error) {
 func (f *FatFile) Seek(offset int64, whence int) (ret int64, err error) {
 	switch whence {
 	case io.SeekStart:
+		// pass
+		fmt.Println("SEEK_START", offset)
 	case io.SeekCurrent:
 		offset += int64(C.fatfs_tell(f.fil))
+		fmt.Println("SEEK_CURRENT", offset)
 	case io.SeekEnd:
-		return -1, FileResultNotImplemented // FIXME: support these options
+		if f.writeAppendMode {
+			offset += int64(C.fatfs_tell(f.fil))
+			fmt.Println("SEEK_END_APPEND", offset)
+		} else {
+			offset += f.info.size
+			fmt.Println("SEEK_END", offset)
+		}
 	default:
 		return -1, FileResultInvalidParameter
 	}
@@ -491,6 +532,10 @@ func (f *FatFile) Truncate(size int64) error {
 
 // Close the file
 func (f *FatFile) Close() error {
+	fmt.Println("CALL Close", f.info.name)
+
+	delete(f.fs.openFiles, f.info.name)
+
 	var errno C.FRESULT
 	if f.fil != nil || f.dir != nil {
 		if f.info.IsDir() {

@@ -171,3 +171,13 @@ func translateFlags(osFlags int) C.BYTE {
 	}
 	return result
 }
+
+func isWriteMode(flags int) bool {
+	// If either O_WRONLY or O_RDWR is set, it's opened for writing.
+	return (flags&os.O_WRONLY != 0) || (flags&os.O_RDWR != 0)
+}
+
+func isAppendMode(flags int) bool {
+	// If O_APPEND is set, it's opened for appending.
+	return flags&os.O_APPEND != 0
+}
