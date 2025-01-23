@@ -39,8 +39,13 @@ void ff_memfree (
 /* Definitions of Mutex                                                   */
 /*------------------------------------------------------------------------*/
 
-#define OS_TYPE	0	/* 0:Win32, 1:uITRON4.0, 2:uC/OS-II, 3:FreeRTOS, 4:CMSIS-RTOS */
+// #define OS_TYPE	0	/* 0:Win32, 1:uITRON4.0, 2:uC/OS-II, 3:FreeRTOS, 4:CMSIS-RTOS 5:pthread */
 
+#if defined(_WIN32)
+#define OS_TYPE	0
+#else
+#define OS_TYPE	5
+#endif
 
 #if   OS_TYPE == 0	/* Win32 */
 #include <windows.h>
@@ -63,6 +68,10 @@ static SemaphoreHandle_t Mutex[FF_VOLUMES + 1];	/* Table of mutex handle */
 #elif OS_TYPE == 4	/* CMSIS-RTOS */
 #include "cmsis_os.h"
 static osMutexId Mutex[FF_VOLUMES + 1];	/* Table of mutex ID */
+
+#elif OS_TYPE == 5  /* POSIX pthread */
+#include <pthread.h>
+static pthread_mutex_t Mutex[FF_VOLUMES + 1];
 
 #endif
 
@@ -106,6 +115,9 @@ int ff_mutex_create (	/* Returns 1:Function succeeded or 0:Could not create the 
 	Mutex[vol] = osMutexCreate(osMutex(cmsis_os_mutex));
 	return (int)(Mutex[vol] != NULL);
 
+#elif OS_TYPE == 5	/* POSIX pthread */
+	return (int)(pthread_mutex_init(&Mutex[vol], NULL) == 0);
+
 #endif
 }
 
@@ -137,6 +149,9 @@ void ff_mutex_delete (	/* Returns 1:Function succeeded or 0:Could not delete due
 
 #elif OS_TYPE == 4	/* CMSIS-RTOS */
 	osMutexDelete(Mutex[vol]);
+
+#elif OS_TYPE == 5	/* POSIX pthread */
+	pthread_mutex_destroy(&Mutex[vol]);
 
 #endif
 }
@@ -171,6 +186,9 @@ int ff_mutex_take (	/* Returns 1:Succeeded or 0:Timeout */
 #elif OS_TYPE == 4	/* CMSIS-RTOS */
 	return (int)(osMutexWait(Mutex[vol], FF_FS_TIMEOUT) == osOK);
 
+#elif OS_TYPE == 5	/* POSIX pthread */
+	return (int)(pthread_mutex_lock(&Mutex[vol]) == 0);
+
 #endif
 }
 
@@ -200,6 +218,9 @@ void ff_mutex_give (
 
 #elif OS_TYPE == 4	/* CMSIS-RTOS */
 	osMutexRelease(Mutex[vol]);
+
+#elif OS_TYPE == 5	/* POSIX pthread */
+	pthread_mutex_unlock(&Mutex[vol]);
 
 #endif
 }

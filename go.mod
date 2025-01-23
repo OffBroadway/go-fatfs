@@ -1,10 +1,6 @@
-module github.com/OffBroadway/fatfs
+module github.com/OffBroadway/go-fatfs
 
 go 1.23.4
-
-// replace golang.org/x/net => ./alt/golang.org/x/net
-// replace github.com/hanwen/go-fuse/v2 => ./alt/github.com/hanwen/go-fuse/v2
-// replace gitlab.bertha.cloud/adphi/affuse => ./alt/gitlab.bertha.cloud/adphi/affuse
 
 require (
 	github.com/fclairamb/ftpserverlib v0.25.0

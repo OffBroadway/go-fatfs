@@ -18,8 +18,6 @@ const (
 	C_STA_PROTECT C.int = 0x04 /* Write protected */
 )
 
-// For this demo, let's store a global (or map) of block devices. In production
-// you'd want a more robust approach.
 var deviceMap = make(map[uint8]BlockDevice)
 
 // RegisterBlockDevice associates a BlockDevice with a drive number.

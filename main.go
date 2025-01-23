@@ -5,7 +5,7 @@ import (
 	"os"
 	"os/signal"
 
-	"github.com/OffBroadway/fatfs/pkg/fatfs"
+	"github.com/OffBroadway/go-fatfs/pkg/fatfs"
 	"github.com/spf13/afero"
 
 	ftpserver "github.com/fclairamb/ftpserverlib"
@@ -73,23 +73,6 @@ func main() {
 
 	fmt.Println("DATA:", string(data[:n]))
 
-	// // server
-	// ln, err := net.Listen("tcp", "127.0.0.1:7564")
-	// if err != nil {
-	// 	panic(err)
-	// }
-	// defer ln.Close()
-
-	// var errorlog, tracelog styx.Logger
-	// tracelog = log.New(os.Stderr, "", 0)
-	// errorlog = log.New(os.Stderr, "", 0)
-
-	// afero9p.NewServer(afero9p.ServerOptions{
-	// 	Listener: ln,
-	// 	ErrorLog: errorlog,
-	// 	TraceLog: tracelog,
-	// }, afero.Fs(fs))
-
 	srv := ftpserver.NewFtpServer(
 		&FTPServer{
 			Settings: &ftpserver.Settings{
@@ -128,50 +111,6 @@ func main() {
 	// if err != nil {
 	// 	fmt.Println("ERROR:", err)
 	// }
-
-	// ffs, err := affuse.New(fs)
-	// if err != nil {
-	// 	log.Fatalf("failed to create fs: %v", err)
-	// }
-
-	// c := make(chan os.Signal, 1)
-	// signal.Notify(c, os.Interrupt)
-
-	// ctx, cancel := context.WithCancel(context.Background())
-
-	// go func() {
-	// 	<-c
-	// 	cancel()
-	// }()
-	// defer ffs.Unmount()
-	// if err := ffs.Mount(ctx, "/home/trevor/mnt"); err != nil {
-	// 	log.Fatal("failed to mount file system")
-	// 	return
-	// }
-
-	// fusefs := aferofuse.NewFuseFileSystem(fs)
-
-	// opts := &nodefs.Options{}
-	// opts.Debug = true
-
-	// mynodefs := pathfs.NewPathNodeFs(fusefs, &pathfs.PathNodeFsOptions{
-	// 	ClientInodes: true,
-	// })
-	// server, _, err := nodefs.MountRoot("/home/trevor/mnt", mynodefs.Root(), opts)
-	// if err != nil {
-	// 	log.Fatalf("Mount fail: %v\n", err)
-	// }
-	// log.Println("Mounted!")
-
-	// c := make(chan os.Signal, 1)
-	// signal.Notify(c, os.Interrupt, syscall.SIGTERM)
-
-	// go func() {
-	// 	<-c
-	// 	server.Unmount()
-	// }()
-
-	// server.Serve()
 
 	fs.Unmount("0:")
 	fatfs.UnregisterBlockDevice(0)
