@@ -6,6 +6,8 @@ package fatfs
 #include <stdlib.h>
 #include "ff.h"
 
+static int GET_MACRO_FF_VOLUMES() { return FF_VOLUMES; }
+
 // A helper function so we can create a FATFS struct in C and return a pointer
 FATFS* allocate_fatfs() {
     FATFS* fs = (FATFS*)malloc(sizeof(FATFS));
@@ -20,12 +22,6 @@ FIL* allocate_fil(void) {
 FF_DIR* allocate_dir(void) {
     FF_DIR* dir = (FF_DIR*)malloc(sizeof(FF_DIR));
 	return dir;
-}
-
-
-// We'll wrap f_mount here. For a real system, pass a valid drive number (0, etc.).
-FRESULT mount_fs(FATFS* fs, const TCHAR* path, BYTE opt) {
-    return f_mount(fs, path, opt);
 }
 
 FRESULT unmount_fs(const TCHAR* path) {
@@ -55,6 +51,8 @@ import (
 type FatFs struct {
 	fs *C.FATFS
 
+	volNumber uint8
+	volPrefix string
 	openFiles map[string]*FatFile
 }
 
@@ -88,12 +86,22 @@ func (fi FileInfo) Sys() interface{}   { return fi.sys }
 var _ os.FileInfo = FileInfo{}
 
 // NewFatFs allocates a new FATFS struct in C.
-func NewFatFs() (*FatFs, error) {
+func NewFatFs(volume int) (*FatFs, error) {
+	if volume >= int(C.GET_MACRO_FF_VOLUMES()) {
+		return nil, fmt.Errorf("volume number exceeds maximum: %d", int(C.GET_MACRO_FF_VOLUMES()))
+	}
+
 	fs := C.allocate_fatfs()
 	if fs == nil {
 		return nil, fmt.Errorf("failed to allocate FATFS")
 	}
-	return &FatFs{fs: fs, openFiles: make(map[string]*FatFile)}, nil
+	obj := &FatFs{
+		fs:        fs,
+		volNumber: uint8(volume),
+		volPrefix: fmt.Sprintf("%d:", volume),
+		openFiles: make(map[string]*FatFile),
+	}
+	return obj, nil
 }
 
 func (f *FatFs) Name() string {
@@ -102,28 +110,37 @@ func (f *FatFs) Name() string {
 }
 
 // Mount calls f_mount internally.
-func (f *FatFs) Mount(path string, opt byte) error {
-	cpath := C.CString(path)
+func (f *FatFs) Mount(blk BlockDevice) error {
+	cpath := C.CString(f.volPrefix)
 	defer C.free(unsafe.Pointer(cpath))
 
-	res := C.mount_fs(f.fs, (*C.TCHAR)(unsafe.Pointer(cpath)), C.BYTE(opt))
+	RegisterBlockDevice(f.volNumber, blk)
+
+	res := C.f_mount(f.fs, (*C.TCHAR)(unsafe.Pointer(cpath)), C.BYTE(0))
 	if res != 0 {
 		return fmt.Errorf("f_mount error code: %d", res)
 	}
 
+	// TODO: is this redundant?
 	f.openFiles = make(map[string]*FatFile)
 
 	return nil
 }
 
-func (f *FatFs) Unmount(path string) error {
-	cpath := C.CString(path)
+func (f *FatFs) Unmount() error {
+	for _, file := range f.openFiles {
+		file.Close() // TODO: handle errors
+	}
+
+	cpath := C.CString(f.volPrefix)
 	defer C.free(unsafe.Pointer(cpath))
 
 	res := C.unmount_fs((*C.TCHAR)(unsafe.Pointer(cpath)))
 	if res != 0 {
 		return fmt.Errorf("f_unmount error code: %d", res)
 	}
+
+	UnregisterBlockDevice(f.volNumber)
 	return nil
 }
 
@@ -144,17 +161,17 @@ func (f *FatFs) Chtimes(name string, atime time.Time, mtime time.Time) error {
 	return nil
 }
 
-func (f *FatFs) Open(path string) (afero.File, error) {
+func (f *FatFs) Open(path string) (*FatFile, error) {
 	fmt.Println("CALL Open", path)
 	return f.OpenFile(path, os.O_RDONLY, 0o644)
 }
 
-func (f *FatFs) OpenFile(path string, flags int, perm os.FileMode) (afero.File, error) {
+func (f *FatFs) OpenFile(path string, flags int, perm os.FileMode) (*FatFile, error) {
 	fmt.Println("CALL OpenFile", path, flags, uint32(perm))
 	file := &FatFile{fs: f}
 	file.writeAppendMode = isWriteMode(flags) && isAppendMode(flags)
 
-	cpath := C.CString(path)
+	cpath := C.CString(f.volPrefix + path)
 	defer C.free(unsafe.Pointer(cpath))
 
 	isDir := false
@@ -222,7 +239,7 @@ func (f *FatFs) Create(name string) (afero.File, error) {
 func (f *FatFs) Remove(name string) error {
 	fmt.Println("CALL Remove", name)
 
-	cpath := C.CString(name)
+	cpath := C.CString(f.volPrefix + name)
 	defer C.free(unsafe.Pointer(cpath))
 
 	return errval(C.f_unlink(cpath))
@@ -303,7 +320,7 @@ func (f *FatFs) Stat(path string) (os.FileInfo, error) {
 		return &info, nil
 	}
 
-	cpath := C.CString(path)
+	cpath := C.CString(f.volPrefix + path)
 	defer C.free(unsafe.Pointer(cpath))
 
 	info := C.FILINFO{}
