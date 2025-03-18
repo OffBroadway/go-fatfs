@@ -85,6 +85,10 @@ DRESULT disk_ioctl (
     return RES_OK;
 }
 
+#if defined(_WIN32) || defined(_WIN64)
+#define localtime_r(a,b) (localtime_s(b,a) ? 0 : b)
+#endif
+
 DWORD get_fattime(void)
 { 
 	struct tm tm;
